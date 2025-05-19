@@ -8,7 +8,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 # Admin Configuration
-ADMIN_IDS = [int(id) for id in os.getenv('ADMIN_IDS', '').split(',') if id]
+ADMIN_IDS = 5950741458
 
 # Store Configuration
 STORE_WALLET = "DB3NZgGPsANwp5RBBMEK2A9ehWeN41QCELRt8WYyL8d8"
