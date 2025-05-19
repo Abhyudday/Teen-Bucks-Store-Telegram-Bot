@@ -245,7 +245,7 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # Admin commands
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the product addition process."""
-    if update.effective_user.id not in ADMIN_IDS:
+    if update.effective_user.id != ADMIN_IDS:
         await update.message.reply_text("❌ Unauthorized access.")
         return ConversationHandler.END
     
@@ -358,7 +358,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def remove_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove a product (admin only)."""
-    if update.effective_user.id not in ADMIN_IDS:
+    if update.effective_user.id != ADMIN_IDS:
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
@@ -385,7 +385,7 @@ async def remove_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show store statistics (admin only)."""
-    if update.effective_user.id not in ADMIN_IDS:
+    if update.effective_user.id != ADMIN_IDS:
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
@@ -399,7 +399,7 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_buyers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show buyer list (admin only)."""
-    if update.effective_user.id not in ADMIN_IDS:
+    if update.effective_user.id != ADMIN_IDS:
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
