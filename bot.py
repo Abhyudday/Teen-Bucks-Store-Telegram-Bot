@@ -5,6 +5,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import requests
 from config import *
 from database import Database
+import telegram
 
 # Enable logging
 logging.basicConfig(
@@ -488,8 +489,36 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, verify_transaction))
 
+    # Add error handler
+    application.add_error_handler(error_handler)
+
     # Start the Bot
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        # Clean up any existing webhooks
+        application.bot.delete_webhook(drop_pending_updates=True)
+        
+        # Start polling
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except Exception as e:
+        logger.error(f"Error starting bot: {e}")
+        raise
+    finally:
+        # Ensure proper cleanup
+        application.stop()
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors in the bot."""
+    logger.error("Exception while handling an update:", exc_info=context.error)
+    
+    if isinstance(context.error, telegram.error.Conflict):
+        logger.error("Bot instance conflict detected. Please ensure only one instance is running.")
+        return
+    
+    # For other errors, try to notify the user
+    if update and update.effective_message:
+        await update.effective_message.reply_text(
+            "❌ An error occurred while processing your request. Please try again later."
+        )
 
 if __name__ == '__main__':
     main() 
