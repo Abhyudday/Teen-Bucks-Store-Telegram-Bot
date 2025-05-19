@@ -6,6 +6,7 @@ import requests
 from config import *
 from database import Database
 import telegram
+import asyncio
 
 # Enable logging
 logging.basicConfig(
@@ -193,6 +194,13 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     signature = update.message.text.strip()
     
+    # Validate signature format
+    if not signature or len(signature) < 32:
+        await update.message.reply_text(
+            "❌ Invalid transaction signature format. Please provide a valid Solana transaction signature."
+        )
+        return
+    
     # Check if signature was already used
     if db.is_signature_used(signature):
         await update.message.reply_text(
@@ -215,60 +223,154 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return
     
-    # Verify transaction using Helius API
-    try:
-        response = requests.post(
-            HELIUS_RPC_URL,
-            json={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTransaction",
-                "params": [signature]
-            }
-        )
-        
-        if response.status_code == 200:
-            tx_data = response.json()
-            if tx_data.get('result'):
-                # Send the product content
-                if product.get('is_file'):
-                    await update.message.reply_document(
-                        document=product['download_content'],
-                        caption="✅ *Payment verified! Thank you for your purchase.*\n\n"
-                               "Here's your purchased file!",
-                        parse_mode='Markdown'
-                    )
-                elif product.get('download_content'):
-                    await update.message.reply_text(
-                        "✅ *Payment verified! Thank you for your purchase.*\n\n"
-                        f"Here's your download link:\n{product['download_content']}",
-                        parse_mode='Markdown'
-                    )
-                else:
-                    await update.message.reply_text(
-                        "✅ *Payment verified! Thank you for your purchase.*\n\n"
-                        "Thank you for your purchase!",
-                        parse_mode='Markdown'
-                    )
+    # Show processing message
+    processing_msg = await update.message.reply_text(
+        "⏳ Verifying your payment... Please wait."
+    )
+    
+    # Verify transaction using Helius API with retries
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [signature]
+                },
+                timeout=10  # Add timeout
+            )
+            
+            if response.status_code == 200:
+                tx_data = response.json()
                 
-                # Save purchase record
-                user_id = update.effective_user.id
-                username = update.effective_user.username or str(user_id)
-                db.save_purchase(user_id, username, product_id, signature)
+                if tx_data.get('result'):
+                    # Verify transaction details
+                    tx_result = tx_data['result']
+                    
+                    # Check if transaction is confirmed
+                    if not tx_result.get('meta', {}).get('status', {}).get('Ok'):
+                        await processing_msg.edit_text(
+                            "❌ Transaction is not confirmed yet. Please wait a few moments and try again."
+                        )
+                        return
+                    
+                    # Send the product content
+                    try:
+                        if product.get('is_file'):
+                            await update.message.reply_document(
+                                document=product['download_content'],
+                                caption="✅ *Payment verified! Thank you for your purchase.*\n\n"
+                                       "Here's your purchased file!",
+                                parse_mode='Markdown'
+                            )
+                        elif product.get('download_content'):
+                            await update.message.reply_text(
+                                "✅ *Payment verified! Thank you for your purchase.*\n\n"
+                                f"Here's your download link:\n{product['download_content']}",
+                                parse_mode='Markdown'
+                            )
+                        else:
+                            await update.message.reply_text(
+                                "✅ *Payment verified! Thank you for your purchase.*\n\n"
+                                "Thank you for your purchase!",
+                                parse_mode='Markdown'
+                            )
+                        
+                        # Save purchase record
+                        user_id = update.effective_user.id
+                        username = update.effective_user.username or str(user_id)
+                        db.save_purchase(user_id, username, product_id, signature)
+                        
+                        # Clear the waiting state
+                        context.user_data['waiting_for_signature'] = False
+                        context.user_data.pop('current_product_id', None)
+                        
+                        # Delete processing message
+                        await processing_msg.delete()
+                        return
+                        
+                    except Exception as e:
+                        logger.error(f"Error sending product content: {e}")
+                        await processing_msg.edit_text(
+                            "❌ Error delivering product content. Please contact support."
+                        )
+                        return
                 
-                # Clear the waiting state
-                context.user_data['waiting_for_signature'] = False
-                context.user_data.pop('current_product_id', None)
+                await processing_msg.edit_text(
+                    "❌ Transaction not found. Please make sure you've sent the correct signature."
+                )
                 return
-        
-        await update.message.reply_text(
-            "❌ Payment verification failed. Please check the signature and try again."
-        )
-    except Exception as e:
-        logger.error(f"Error verifying transaction: {e}")
-        await update.message.reply_text(
-            "❌ An error occurred while verifying the payment. Please try again later."
-        )
+                
+            elif response.status_code == 429:  # Rate limit
+                if attempt < max_retries - 1:
+                    await processing_msg.edit_text(
+                        f"⏳ Rate limit reached. Retrying in {retry_delay} seconds..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    await processing_msg.edit_text(
+                        "❌ Rate limit reached. Please try again in a few minutes."
+                    )
+                    return
+                    
+            else:
+                logger.error(f"Helius API error: {response.status_code} - {response.text}")
+                if attempt < max_retries - 1:
+                    await processing_msg.edit_text(
+                        f"⏳ Error occurred. Retrying in {retry_delay} seconds..."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                else:
+                    await processing_msg.edit_text(
+                        "❌ Error verifying transaction. Please try again later."
+                    )
+                    return
+                
+        except requests.exceptions.Timeout:
+            logger.error("Helius API request timed out")
+            if attempt < max_retries - 1:
+                await processing_msg.edit_text(
+                    f"⏳ Request timed out. Retrying in {retry_delay} seconds..."
+                )
+                await asyncio.sleep(retry_delay)
+                continue
+            else:
+                await processing_msg.edit_text(
+                    "❌ Request timed out. Please try again later."
+                )
+                return
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during transaction verification: {e}")
+            if attempt < max_retries - 1:
+                await processing_msg.edit_text(
+                    f"⏳ Network error. Retrying in {retry_delay} seconds..."
+                )
+                await asyncio.sleep(retry_delay)
+                continue
+            else:
+                await processing_msg.edit_text(
+                    "❌ Network error occurred. Please check your internet connection and try again."
+                )
+                return
+                
+        except Exception as e:
+            logger.error(f"Unexpected error during transaction verification: {e}")
+            await processing_msg.edit_text(
+                "❌ An unexpected error occurred. Please try again later."
+            )
+            return
+    
+    await processing_msg.edit_text(
+        "❌ Failed to verify transaction after multiple attempts. Please try again later."
+    )
 
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the product addition process."""
