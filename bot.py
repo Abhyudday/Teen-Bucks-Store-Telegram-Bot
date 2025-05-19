@@ -13,7 +13,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states for adding products
-TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_LINK = range(5)
+TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_CONTENT = range(5)
 
 # Store data
 store_data = {
@@ -212,22 +212,34 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if response.status_code == 200:
             tx_data = response.json()
             if tx_data.get('result'):
-                # Verify amount and destination
-                # Note: This is a simplified verification. In production, you'd want more robust checks
-                await update.message.reply_text(
-                    "✅ Payment verified! Thank you for your purchase.\n\n"
-                    f"Here's your download link:\n{store_data['products'][0]['download_link']}"
-                )
+                # Get the current product
+                current_index = context.user_data.get('current_product_index', 0)
+                product = store_data['products'][current_index]
+                
+                # Send the product content
+                if product.get('is_file'):
+                    await update.message.reply_document(
+                        document=product['download_content'],
+                        caption="✅ *Payment verified! Thank you for your purchase.*\n\n"
+                               "Here's your purchased file!",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        "✅ *Payment verified! Thank you for your purchase.*\n\n"
+                        f"Here's your download link:\n{product['download_content']}",
+                        parse_mode='Markdown'
+                    )
                 
                 # Update store data
                 user_id = update.effective_user.id
                 username = update.effective_user.username or str(user_id)
                 store_data['buyers'][str(user_id)] = {
                     'username': username,
-                    'purchase': store_data['products'][0]['title']
+                    'purchase': product['title']
                 }
-                store_data['total_sales'] += PRODUCT_PRICE
-                store_data['used_signatures'].add(signature)  # Mark signature as used
+                store_data['total_sales'] += product['price']
+                store_data['used_signatures'].add(signature)
                 save_store_data()
                 
                 context.user_data['waiting_for_signature'] = False
@@ -308,14 +320,28 @@ async def add_product_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "🔗 *Photo Set*\n\n"
-        "Finally, please enter the download link for the product:",
+        "Now, please either:\n"
+        "1. Send a file to be delivered after purchase, or\n"
+        "2. Enter a download link\n\n"
+        "Send /skip if you don't want to add any content yet.",
         parse_mode='Markdown'
     )
-    return DOWNLOAD_LINK
+    return DOWNLOAD_CONTENT
 
-async def add_product_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle product download link input and complete the process."""
-    context.user_data['new_product']['download_link'] = update.message.text
+async def add_product_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle product content input (file or download link)."""
+    if update.message.text == '/skip':
+        context.user_data['new_product']['download_content'] = None
+        context.user_data['new_product']['is_file'] = False
+    elif update.message.document:
+        # Store file information
+        context.user_data['new_product']['download_content'] = update.message.document.file_id
+        context.user_data['new_product']['is_file'] = True
+        context.user_data['new_product']['file_name'] = update.message.document.file_name
+    else:
+        # Store download link
+        context.user_data['new_product']['download_content'] = update.message.text
+        context.user_data['new_product']['is_file'] = False
     
     # Add the new product
     store_data['products'].append(context.user_data['new_product'])
@@ -329,7 +355,8 @@ async def add_product_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ *Product Added Successfully!*\n\n"
         f"*Title:* {new_product['title']}\n"
         f"*Price:* {new_product['price']} SOL\n"
-        f"*Description:* {new_product['description']}\n\n"
+        f"*Description:* {new_product['description']}\n"
+        f"*Content Type:* {'File' if new_product.get('is_file') else 'Download Link'}\n\n"
         "The product is now available in the store!"
     )
     
@@ -429,7 +456,11 @@ def main():
                 MessageHandler(filters.PHOTO, add_product_photo),
                 CommandHandler('skip', add_product_photo)
             ],
-            DOWNLOAD_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_link)],
+            DOWNLOAD_CONTENT: [
+                MessageHandler(filters.Document.ALL, add_product_content),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_content),
+                CommandHandler('skip', add_product_content)
+            ],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
