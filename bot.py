@@ -72,7 +72,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == 'browse':
         await show_products(update, context)
     elif query.data == 'buy':
-        await show_payment_info(update, context)
+        # Get current product index
+        current_index = context.user_data.get('current_product_index', 0)
+        product = store_data['products'][current_index]
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ I've Sent the Payment", callback_data='verify')],
+            [InlineKeyboardButton("🔙 Back to Product", callback_data='browse')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.message.edit_text(
+            f"*💳 Payment Information*\n\n"
+            f"Please send *{product['price']} SOL* to:\n"
+            f"`{STORE_WALLET}`\n\n"
+            f"*Important Notes:*\n"
+            f"• Make sure to send exactly {product['price']} SOL\n"
+            f"• Double-check the wallet address\n"
+            f"• Keep your transaction signature ready\n\n"
+            f"After sending, click the button below to verify your payment.",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
     elif query.data == 'verify':
         await query.message.reply_text(
             "📝 Please paste the transaction signature to verify your payment.\n\n"
@@ -159,29 +180,6 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-
-async def show_payment_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show payment information."""
-    query = update.callback_query
-    
-    keyboard = [
-        [InlineKeyboardButton("✅ I've Sent the Payment", callback_data='verify')],
-        [InlineKeyboardButton("🔙 Back to Product", callback_data='browse')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.message.edit_text(
-        f"*💳 Payment Information*\n\n"
-        f"Please send *{PRODUCT_PRICE} SOL* to:\n"
-        f"`{STORE_WALLET}`\n\n"
-        f"*Important Notes:*\n"
-        f"• Make sure to send exactly {PRODUCT_PRICE} SOL\n"
-        f"• Double-check the wallet address\n"
-        f"• Keep your transaction signature ready\n\n"
-        f"After sending, click the button below to verify your payment.",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
 
 async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verify the transaction signature."""
