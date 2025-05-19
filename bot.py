@@ -401,6 +401,43 @@ async def show_buyers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(buyers_list, parse_mode='Markdown')
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel the current operation."""
+    context.user_data.pop('new_product', None)
+    await update.message.reply_text(
+        "❌ Operation cancelled.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
+
+async def remove_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove a product (admin only)."""
+    if update.effective_user.id != ADMIN_IDS:
+        await update.message.reply_text("❌ Unauthorized access.")
+        return
+    
+    products = db.get_all_products()
+    if not products:
+        await update.message.reply_text("📭 No products available to remove.")
+        return
+    
+    keyboard = []
+    for product in products:
+        keyboard.append([InlineKeyboardButton(
+            f"🗑 {product['title']} ({product['price']} SOL)",
+            callback_data=f"remove_{product['title']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data='cancel_remove')])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "🗑 *Select a product to remove:*\n\n"
+        "Click on a product to remove it from the store.",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+
 def main():
     """Start the bot."""
     # Create the Application
