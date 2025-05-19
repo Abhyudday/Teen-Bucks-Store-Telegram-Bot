@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_CONTENT = range(5)
 
 # Initialize database
-db = Database()
+try:
+    db = Database()
+    logger.info("Database connection established successfully")
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+    raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message when the command /start is issued."""
