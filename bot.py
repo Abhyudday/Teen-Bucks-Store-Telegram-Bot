@@ -629,7 +629,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         except Exception as e:
             logger.error(f"Failed to send error message to user: {e}")
 
-def main():
+async def main():
     """Start the bot."""
     try:
         # Create the Application
@@ -674,14 +674,15 @@ def main():
         try:
             # Clean up any existing webhooks
             logger.info("Cleaning up existing webhooks...")
-            asyncio.run(application.bot.delete_webhook(drop_pending_updates=True))
+            await application.bot.delete_webhook(drop_pending_updates=True)
             
             # Start polling with a clean state
             logger.info("Starting polling...")
-            application.run_polling(
+            await application.initialize()
+            await application.start()
+            await application.run_polling(
                 allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True,
-                close_loop=False
+                drop_pending_updates=True
             )
         except Exception as e:
             logger.error(f"Error during bot operation: {e}", exc_info=True)
@@ -689,22 +690,16 @@ def main():
         finally:
             # Ensure proper cleanup
             logger.info("Stopping bot application...")
-            application.stop()
+            await application.stop()
             
     except Exception as e:
         logger.error(f"Fatal error during bot startup: {e}", exc_info=True)
         raise
 
 if __name__ == '__main__':
-    # Set up asyncio event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-    finally:
-        loop.close() 
+        logger.error(f"Fatal error: {e}", exc_info=True) 
