@@ -127,6 +127,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
+        # Store the product ID in context for verification
+        context.user_data['current_product_id'] = product_id
+        
         keyboard = [
             [InlineKeyboardButton("✅ I've Sent the Payment", callback_data=f'verify_{product_id}')],
             [InlineKeyboardButton("🔙 Back to Product", callback_data='browse')]
@@ -193,8 +196,13 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Get the product being purchased
     product_id = context.user_data.get('current_product_id')
+    if not product_id:
+        await update.message.reply_text(
+            "❌ Product information not found. Please try the purchase process again."
+        )
+        return
+        
     product = db.get_product_by_id(product_id)
-    
     if not product:
         await update.message.reply_text(
             "❌ Product not found. Please try again."
@@ -224,10 +232,16 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                "Here's your purchased file!",
                         parse_mode='Markdown'
                     )
-                else:
+                elif product.get('download_content'):
                     await update.message.reply_text(
                         "✅ *Payment verified! Thank you for your purchase.*\n\n"
                         f"Here's your download link:\n{product['download_content']}",
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await update.message.reply_text(
+                        "✅ *Payment verified! Thank you for your purchase.*\n\n"
+                        "Thank you for your purchase!",
                         parse_mode='Markdown'
                     )
                 
@@ -236,7 +250,9 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 username = update.effective_user.username or str(user_id)
                 db.save_purchase(user_id, username, product_id, signature)
                 
+                # Clear the waiting state
                 context.user_data['waiting_for_signature'] = False
+                context.user_data.pop('current_product_id', None)
                 return
         
         await update.message.reply_text(
