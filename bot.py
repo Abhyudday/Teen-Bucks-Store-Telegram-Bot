@@ -7,6 +7,8 @@ from config import *
 from database import Database
 import telegram
 import asyncio
+import os
+from dotenv import load_dotenv
 
 # Enable logging
 logging.basicConfig(
@@ -19,6 +21,17 @@ logger = logging.getLogger(__name__)
 file_handler = logging.FileHandler('bot.log')
 file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
 logger.addHandler(file_handler)
+
+# Load environment variables
+load_dotenv()
+
+# Verify required environment variables
+required_vars = ['BOT_TOKEN', 'ADMIN_IDS', 'STORE_WALLET', 'HELIUS_API_KEY']
+missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+if missing_vars:
+    logger.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
 
 # Conversation states for adding products
 TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_CONTENT = range(5)
