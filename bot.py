@@ -31,31 +31,6 @@ except Exception as e:
     logger.error(f"Failed to initialize database: {e}")
     raise
 
-# --- Default Product Setup ---
-DEFAULT_PRODUCT = {
-    "title": "300 Insider Solana Wallets of Influencers",
-    "description": (
-        "Gain access to a curated list of 300 high-performing insider wallets on Solana — "
-        "perfect for tracking smart money, spotting early trends, and improving your trading edge. "
-        "Ideal for copy trading, research, or alpha hunting."
-    ),
-    "price": 0.1,
-    # TODO: Replace these with actual Telegram file_id and photo_id after uploading
-    "photo_id": "<TELEGRAM_PHOTO_FILE_ID>",  # <-- Replace with actual file_id
-    "download_content": "<TELEGRAM_FILE_FILE_ID>",  # <-- Replace with actual file_id
-    "is_file": True,
-    "file_name": "300 Insider wallets.txt"
-}
-
-# On startup, insert default product if DB is empty
-try:
-    if not db.get_all_products():
-        logger.info("No products found in DB. Inserting default product...")
-        db.save_product(DEFAULT_PRODUCT)
-        logger.info("Default product inserted.")
-except Exception as e:
-    logger.error(f"Error inserting default product: {e}")
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message when the command /start is issued."""
     # Reset product index when starting
