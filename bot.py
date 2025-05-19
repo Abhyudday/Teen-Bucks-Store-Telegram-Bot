@@ -4,6 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters, ConversationHandler
 import requests
 from config import *
+from database import Database
 
 # Enable logging
 logging.basicConfig(
@@ -12,39 +13,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Initialize database
+db = Database()
+
 # Conversation states for adding products
 TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_CONTENT = range(5)
-
-# Store data
-store_data = {
-    "products": [DEFAULT_PRODUCT],
-    "buyers": {},
-    "total_sales": 0,
-    "used_signatures": set()
-}
-
-def save_store_data():
-    data_to_save = store_data.copy()
-    data_to_save['used_signatures'] = list(store_data['used_signatures'])
-    with open('store_data.json', 'w') as f:
-        json.dump(data_to_save, f)
-
-def load_store_data():
-    try:
-        with open('store_data.json', 'r') as f:
-            data = json.load(f)
-            data['used_signatures'] = set(data.get('used_signatures', []))
-            return data
-    except FileNotFoundError:
-        return {
-            "products": [DEFAULT_PRODUCT],
-            "buyers": {},
-            "total_sales": 0,
-            "used_signatures": set()
-        }
-
-# Initialize store data
-store_data = load_store_data()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send welcome message when the command /start is issued."""
@@ -64,6 +37,74 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show available products."""
+    query = update.callback_query
+    
+    # Get all products from database
+    products = db.get_all_products()
+    
+    if not products:
+        await query.message.edit_text(
+            "📭 No products available at the moment.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Get current product index from context or default to 0
+    current_index = context.user_data.get('current_product_index', 0)
+    
+    # Handle navigation
+    if query.data == 'next_product':
+        current_index = (current_index + 1) % len(products)
+    elif query.data == 'prev_product':
+        current_index = (current_index - 1) % len(products)
+    
+    # Save current index
+    context.user_data['current_product_index'] = current_index
+    
+    product = products[current_index]
+    
+    # Create navigation buttons
+    nav_buttons = []
+    if len(products) > 1:
+        nav_buttons = [
+            InlineKeyboardButton("⬅️", callback_data='prev_product'),
+            InlineKeyboardButton(f"{current_index + 1}/{len(products)}", callback_data='ignore'),
+            InlineKeyboardButton("➡️", callback_data='next_product')
+        ]
+    
+    # Create buy button with product's specific price
+    keyboard = [
+        [InlineKeyboardButton(f"💳 Buy Now ({product['price']} SOL)", callback_data='buy')],
+        nav_buttons,
+        [InlineKeyboardButton("🔄 Refresh", callback_data='browse')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    product_text = (
+        f"*🎯 {product['title']}*\n\n"
+        f"💰 *Price:* {product['price']} SOL\n\n"
+        f"📝 *Description:*\n{product['description']}\n\n"
+        f"Click the button below to purchase!"
+    )
+    
+    if product.get('photo_id'):
+        await query.message.edit_media(
+            media=InputMediaPhoto(
+                media=product['photo_id'],
+                caption=product_text,
+                parse_mode='Markdown'
+            ),
+            reply_markup=reply_markup
+        )
+    else:
+        await query.message.edit_text(
+            product_text,
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle button presses."""
     query = update.callback_query
@@ -74,7 +115,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'buy':
         # Get current product index
         current_index = context.user_data.get('current_product_index', 0)
-        product = store_data['products'][current_index]
+        products = db.get_all_products()
+        product = products[current_index]
         
         keyboard = [
             [InlineKeyboardButton("✅ I've Sent the Payment", callback_data='verify')],
@@ -112,74 +154,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif query.data.startswith('remove_'):
         # Handle product removal
-        product_title = query.data.replace('remove_', '')
-        store_data['products'] = [p for p in store_data['products'] if p['title'] != product_title]
-        save_store_data()
-        
-        # Update the message to show removal confirmation
-        await query.message.edit_text(
-            f"✅ *Product Removed Successfully*\n\n"
-            f"The product '{product_title}' has been removed from the store.\n\n"
-            f"Remaining products: {len(store_data['products'])}",
-            parse_mode='Markdown'
-        )
-
-async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show available products."""
-    query = update.callback_query
-    
-    # Get current product index from context or default to 0
-    current_index = context.user_data.get('current_product_index', 0)
-    
-    # Handle navigation
-    if query.data == 'next_product':
-        current_index = (current_index + 1) % len(store_data['products'])
-    elif query.data == 'prev_product':
-        current_index = (current_index - 1) % len(store_data['products'])
-    
-    # Save current index
-    context.user_data['current_product_index'] = current_index
-    
-    product = store_data['products'][current_index]
-    
-    # Create navigation buttons
-    nav_buttons = []
-    if len(store_data['products']) > 1:
-        nav_buttons = [
-            InlineKeyboardButton("⬅️", callback_data='prev_product'),
-            InlineKeyboardButton(f"{current_index + 1}/{len(store_data['products'])}", callback_data='ignore'),
-            InlineKeyboardButton("➡️", callback_data='next_product')
-        ]
-    
-    keyboard = [
-        [InlineKeyboardButton(f"💳 Buy Now ({product['price']} SOL)", callback_data='buy')],
-        nav_buttons,
-        [InlineKeyboardButton("🔄 Refresh", callback_data='browse')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    product_text = (
-        f"*🎯 {product['title']}*\n\n"
-        f"💰 *Price:* {product['price']} SOL\n\n"
-        f"📝 *Description:*\n{product['description']}\n\n"
-        f"Click the button below to purchase!"
-    )
-    
-    if product.get('photo_id'):
-        await query.message.edit_media(
-            media=InputMediaPhoto(
-                media=product['photo_id'],
-                caption=product_text,
+        product_id = int(query.data.replace('remove_', ''))
+        if db.remove_product(product_id):
+            await query.message.edit_text(
+                "✅ *Product Removed Successfully*\n\n"
+                f"Remaining products: {len(db.get_all_products())}",
                 parse_mode='Markdown'
-            ),
-            reply_markup=reply_markup
-        )
-    else:
-        await query.message.edit_text(
-            product_text,
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
-        )
+            )
+        else:
+            await query.message.edit_text(
+                "❌ Failed to remove product.",
+                parse_mode='Markdown'
+            )
 
 async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verify the transaction signature."""
@@ -189,7 +175,7 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
     signature = update.message.text.strip()
     
     # Check if signature was already used
-    if signature in store_data['used_signatures']:
+    if db.is_signature_used(signature):
         await update.message.reply_text(
             "❌ This transaction signature has already been used. Each payment can only be used once."
         )
@@ -212,36 +198,34 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if tx_data.get('result'):
                 # Get the current product
                 current_index = context.user_data.get('current_product_index', 0)
-                product = store_data['products'][current_index]
+                products = db.get_all_products()
+                product = products[current_index]
                 
-                # Send the product content
-                if product.get('is_file'):
-                    await update.message.reply_document(
-                        document=product['download_content'],
-                        caption="✅ *Payment verified! Thank you for your purchase.*\n\n"
-                               "Here's your purchased file!",
-                        parse_mode='Markdown'
-                    )
-                else:
-                    await update.message.reply_text(
-                        "✅ *Payment verified! Thank you for your purchase.*\n\n"
-                        f"Here's your download link:\n{product['download_content']}",
-                        parse_mode='Markdown'
-                    )
+                # Add buyer and transaction to database
+                buyer_id = db.add_buyer(
+                    update.effective_user.id,
+                    update.effective_user.username or str(update.effective_user.id),
+                    product['id']
+                )
                 
-                # Update store data
-                user_id = update.effective_user.id
-                username = update.effective_user.username or str(user_id)
-                store_data['buyers'][str(user_id)] = {
-                    'username': username,
-                    'purchase': product['title']
-                }
-                store_data['total_sales'] += product['price']
-                store_data['used_signatures'].add(signature)
-                save_store_data()
-                
-                context.user_data['waiting_for_signature'] = False
-                return
+                if db.add_transaction(signature, buyer_id, product['price']):
+                    # Send the product content
+                    if product.get('is_file'):
+                        await update.message.reply_document(
+                            document=product['download_content'],
+                            caption="✅ *Payment verified! Thank you for your purchase.*\n\n"
+                                   "Here's your purchased file!",
+                            parse_mode='Markdown'
+                        )
+                    else:
+                        await update.message.reply_text(
+                            "✅ *Payment verified! Thank you for your purchase.*\n\n"
+                            f"Here's your download link:\n{product['download_content']}",
+                            parse_mode='Markdown'
+                        )
+                    
+                    context.user_data['waiting_for_signature'] = False
+                    return
         
         await update.message.reply_text(
             "❌ Payment verification failed. Please check the signature and try again."
@@ -252,7 +236,6 @@ async def verify_transaction(update: Update, context: ContextTypes.DEFAULT_TYPE)
             "❌ An error occurred while verifying the payment. Please try again later."
         )
 
-# Admin commands
 async def add_product_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Start the product addition process."""
     if update.effective_user.id != ADMIN_IDS:
@@ -341,9 +324,8 @@ async def add_product_content(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data['new_product']['download_content'] = update.message.text
         context.user_data['new_product']['is_file'] = False
     
-    # Add the new product
-    store_data['products'].append(context.user_data['new_product'])
-    save_store_data()
+    # Add the new product to database
+    product_id = db.add_product(context.user_data['new_product'])
     
     # Clear the temporary data
     new_product = context.user_data.pop('new_product')
@@ -372,30 +354,22 @@ async def add_product_content(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel the current operation."""
-    context.user_data.pop('new_product', None)
-    await update.message.reply_text(
-        "❌ Operation cancelled.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    return ConversationHandler.END
-
 async def remove_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Remove a product (admin only)."""
     if update.effective_user.id != ADMIN_IDS:
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
-    if not store_data['products']:
+    products = db.get_all_products()
+    if not products:
         await update.message.reply_text("📭 No products available to remove.")
         return
     
     keyboard = []
-    for product in store_data['products']:
+    for product in products:
         keyboard.append([InlineKeyboardButton(
             f"🗑 {product['title']} ({product['price']} SOL)",
-            callback_data=f"remove_{product['title']}"
+            callback_data=f"remove_{product['id']}"
         )])
     
     keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data='cancel_remove')])
@@ -414,13 +388,14 @@ async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
-    stats = (
+    stats = db.get_store_stats()
+    stats_text = (
         "*📊 Store Statistics*\n\n"
-        f"👥 *Total Buyers:* {len(store_data['buyers'])}\n"
-        f"💰 *Total Sales:* {store_data['total_sales']} SOL\n"
-        f"📦 *Active Products:* {len(store_data['products'])}"
+        f"👥 *Total Buyers:* {stats['total_buyers']}\n"
+        f"💰 *Total Sales:* {stats['total_sales']} SOL\n"
+        f"📦 *Active Products:* {stats['active_products']}"
     )
-    await update.message.reply_text(stats, parse_mode='Markdown')
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 async def show_buyers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show buyer list (admin only)."""
@@ -428,15 +403,25 @@ async def show_buyers(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Unauthorized access.")
         return
     
-    if not store_data['buyers']:
+    buyers = db.get_buyers_list()
+    if not buyers:
         await update.message.reply_text("📭 No buyers yet.")
         return
     
     buyers_list = "*👥 Buyer List*\n\n"
-    for user_id, data in store_data['buyers'].items():
-        buyers_list += f"• @{data['username']}: {data['purchase']}\n"
+    for buyer in buyers:
+        buyers_list += f"• @{buyer['username']}: {buyer['product']} ({buyer['purchase_date']})\n"
     
     await update.message.reply_text(buyers_list, parse_mode='Markdown')
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel the current operation."""
+    context.user_data.pop('new_product', None)
+    await update.message.reply_text(
+        "❌ Operation cancelled.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
 
 def main():
     """Start the bot."""
