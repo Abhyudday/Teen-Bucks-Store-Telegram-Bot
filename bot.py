@@ -674,11 +674,15 @@ def main():
         try:
             # Clean up any existing webhooks
             logger.info("Cleaning up existing webhooks...")
-            application.bot.delete_webhook(drop_pending_updates=True)
+            asyncio.run(application.bot.delete_webhook(drop_pending_updates=True))
             
-            # Start polling
+            # Start polling with a clean state
             logger.info("Starting polling...")
-            application.run_polling(allowed_updates=Update.ALL_TYPES)
+            application.run_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True,
+                close_loop=False
+            )
         except Exception as e:
             logger.error(f"Error during bot operation: {e}", exc_info=True)
             raise
@@ -692,4 +696,15 @@ def main():
         raise
 
 if __name__ == '__main__':
-    main() 
+    # Set up asyncio event loop
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        main()
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+    finally:
+        loop.close() 
