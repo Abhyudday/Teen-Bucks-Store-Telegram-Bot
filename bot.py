@@ -14,6 +14,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Add file handler for persistent logging
+file_handler = logging.FileHandler('bot.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
 # Conversation states for adding products
 TITLE, DESCRIPTION, PRICE, PHOTO, DOWNLOAD_CONTENT = range(5)
 
@@ -455,70 +460,134 @@ async def remove_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-def main():
-    """Start the bot."""
-    # Create the Application
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    # Add conversation handler for adding products
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('add', add_product_start)],
-        states={
-            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_title)],
-            DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_description)],
-            PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_price)],
-            PHOTO: [
-                MessageHandler(filters.PHOTO, add_product_photo),
-                CommandHandler('skip', add_product_photo)
-            ],
-            DOWNLOAD_CONTENT: [
-                MessageHandler(filters.Document.ALL, add_product_content),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_content),
-                CommandHandler('skip', add_product_content)
-            ],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler)
-    application.add_handler(CommandHandler("remove", remove_product))
-    application.add_handler(CommandHandler("stats", show_stats))
-    application.add_handler(CommandHandler("buyers", show_buyers))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, verify_transaction))
-
-    # Add error handler
-    application.add_error_handler(error_handler)
-
-    # Start the Bot
-    try:
-        # Clean up any existing webhooks
-        application.bot.delete_webhook(drop_pending_updates=True)
-        
-        # Start polling
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        logger.error(f"Error starting bot: {e}")
-        raise
-    finally:
-        # Ensure proper cleanup
-        application.stop()
-
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the bot."""
+    # Log the full error with traceback
     logger.error("Exception while handling an update:", exc_info=context.error)
     
+    # Get detailed error information
+    error_type = type(context.error).__name__
+    error_message = str(context.error)
+    
+    # Log specific error details
+    logger.error(f"Error type: {error_type}")
+    logger.error(f"Error message: {error_message}")
+    
+    if update:
+        logger.error(f"Update: {update.to_dict()}")
+    
+    # Handle specific error types
     if isinstance(context.error, telegram.error.Conflict):
         logger.error("Bot instance conflict detected. Please ensure only one instance is running.")
         return
     
-    # For other errors, try to notify the user
+    elif isinstance(context.error, telegram.error.NetworkError):
+        logger.error("Network error occurred. Please check your internet connection.")
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ Network error occurred. Please try again in a few moments."
+            )
+        return
+    
+    elif isinstance(context.error, telegram.error.BadRequest):
+        logger.error(f"Bad request error: {error_message}")
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ Invalid request. Please try again with correct parameters."
+            )
+        return
+    
+    elif isinstance(context.error, telegram.error.Unauthorized):
+        logger.error("Bot token is invalid or has been revoked.")
+        return
+    
+    elif isinstance(context.error, telegram.error.TimedOut):
+        logger.error("Request timed out.")
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ Request timed out. Please try again."
+            )
+        return
+    
+    # For database errors
+    elif isinstance(context.error, Exception) and "database" in error_message.lower():
+        logger.error("Database error occurred.")
+        if update and update.effective_message:
+            await update.effective_message.reply_text(
+                "❌ Database error occurred. Please try again later."
+            )
+        return
+    
+    # For other errors, try to notify the user with more specific message
     if update and update.effective_message:
-        await update.effective_message.reply_text(
-            "❌ An error occurred while processing your request. Please try again later."
+        try:
+            await update.effective_message.reply_text(
+                f"❌ An error occurred: {error_type}\nPlease try again later or contact support if the issue persists."
+            )
+        except Exception as e:
+            logger.error(f"Failed to send error message to user: {e}")
+
+def main():
+    """Start the bot."""
+    try:
+        # Create the Application
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Log startup
+        logger.info("Starting bot application...")
+        
+        # Add conversation handler for adding products
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler('add', add_product_start)],
+            states={
+                TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_title)],
+                DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_description)],
+                PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_price)],
+                PHOTO: [
+                    MessageHandler(filters.PHOTO, add_product_photo),
+                    CommandHandler('skip', add_product_photo)
+                ],
+                DOWNLOAD_CONTENT: [
+                    MessageHandler(filters.Document.ALL, add_product_content),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_product_content),
+                    CommandHandler('skip', add_product_content)
+                ],
+            },
+            fallbacks=[CommandHandler('cancel', cancel)]
         )
+
+        # Add handlers
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(conv_handler)
+        application.add_handler(CommandHandler("remove", remove_product))
+        application.add_handler(CommandHandler("stats", show_stats))
+        application.add_handler(CommandHandler("buyers", show_buyers))
+        application.add_handler(CallbackQueryHandler(button_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, verify_transaction))
+
+        # Add error handler
+        application.add_error_handler(error_handler)
+
+        # Start the Bot
+        try:
+            # Clean up any existing webhooks
+            logger.info("Cleaning up existing webhooks...")
+            application.bot.delete_webhook(drop_pending_updates=True)
+            
+            # Start polling
+            logger.info("Starting polling...")
+            application.run_polling(allowed_updates=Update.ALL_TYPES)
+        except Exception as e:
+            logger.error(f"Error during bot operation: {e}", exc_info=True)
+            raise
+        finally:
+            # Ensure proper cleanup
+            logger.info("Stopping bot application...")
+            application.stop()
+            
+    except Exception as e:
+        logger.error(f"Fatal error during bot startup: {e}", exc_info=True)
+        raise
 
 if __name__ == '__main__':
     main() 
